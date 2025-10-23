@@ -1,0 +1,219 @@
+-- ecommerce_schema.sql
+-- E-commerce store schema: Customers, Addresses, Categories, Products,
+
+
+DROP DATABASE IF EXISTS ecommerce_store;
+CREATE DATABASE ecommerce_store CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
+USE ecommerce_store;
+
+-- -----------------------
+-- Customers and Addresses
+-- -----------------------
+CREATE TABLE Customers (
+  CustomerID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  FirstName VARCHAR(100) NOT NULL,
+  LastName VARCHAR(100) NOT NULL,
+  Email VARCHAR(255) NOT NULL UNIQUE,
+  Phone VARCHAR(30),
+  CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (CustomerID)
+) ENGINE=InnoDB;
+
+CREATE TABLE Addresses (
+  AddressID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  CustomerID INT UNSIGNED NOT NULL,
+  Label VARCHAR(50) NOT NULL, -- e.g., 'Home', 'Work'
+  Street VARCHAR(255) NOT NULL,
+  City VARCHAR(100) NOT NULL,
+  State VARCHAR(100),
+  PostalCode VARCHAR(20),
+  Country VARCHAR(100) NOT NULL,
+  IsDefault BOOLEAN NOT NULL DEFAULT FALSE,
+  PRIMARY KEY (AddressID),
+  CONSTRAINT fk_addresses_customer FOREIGN KEY (CustomerID)
+    REFERENCES Customers(CustomerID)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- -----------------------
+-- Product catalog
+-- -----------------------
+CREATE TABLE Categories (
+  CategoryID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  Name VARCHAR(100) NOT NULL UNIQUE,
+  Description TEXT,
+  PRIMARY KEY (CategoryID)
+) ENGINE=InnoDB;
+
+CREATE TABLE Products (
+  ProductID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  SKU VARCHAR(64) NOT NULL UNIQUE,
+  Name VARCHAR(255) NOT NULL,
+  Description TEXT,
+  CategoryID INT UNSIGNED,
+  Price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  Active BOOLEAN NOT NULL DEFAULT TRUE,
+  CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (ProductID),
+  INDEX idx_products_category (CategoryID),
+  CONSTRAINT fk_products_category FOREIGN KEY (CategoryID)
+    REFERENCES Categories(CategoryID)
+    ON DELETE SET NULL
+    ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE ProductImages (
+  ImageID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  ProductID INT UNSIGNED NOT NULL,
+  Url VARCHAR(1000) NOT NULL,
+  AltText VARCHAR(255),
+  SortOrder INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (ImageID),
+  CONSTRAINT fk_pi_product FOREIGN KEY (ProductID)
+    REFERENCES Products(ProductID)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- -----------------------
+-- Suppliers (Many-to-Many with Products)
+-- -----------------------
+CREATE TABLE Suppliers (
+  SupplierID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  Name VARCHAR(200) NOT NULL,
+  ContactEmail VARCHAR(255),
+  Phone VARCHAR(30),
+  PRIMARY KEY (SupplierID)
+) ENGINE=InnoDB;
+
+CREATE TABLE ProductSuppliers (
+  ProductID INT UNSIGNED NOT NULL,
+  SupplierID INT UNSIGNED NOT NULL,
+  SupplierSKU VARCHAR(128),
+  LeadTimeDays INT UNSIGNED DEFAULT 0,
+  PRIMARY KEY (ProductID, SupplierID),
+  CONSTRAINT fk_ps_product FOREIGN KEY (ProductID)
+    REFERENCES Products(ProductID)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE,
+  CONSTRAINT fk_ps_supplier FOREIGN KEY (SupplierID)
+    REFERENCES Suppliers(SupplierID)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- -----------------------
+-- Inventory (One row per product per warehouse or location)
+-- -----------------------
+CREATE TABLE InventoryLocations (
+  LocationID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  Name VARCHAR(100) NOT NULL,
+  Address VARCHAR(255),
+  PRIMARY KEY (LocationID)
+) ENGINE=InnoDB;
+
+CREATE TABLE Inventory (
+  InventoryID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  ProductID INT UNSIGNED NOT NULL,
+  LocationID INT UNSIGNED NOT NULL,
+  Quantity INT NOT NULL DEFAULT 0,
+  LastUpdated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (InventoryID),
+  UNIQUE KEY uk_inventory_product_location (ProductID, LocationID),
+  CONSTRAINT fk_inventory_product FOREIGN KEY (ProductID)
+    REFERENCES Products(ProductID)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE,
+  CONSTRAINT fk_inventory_location FOREIGN KEY (LocationID)
+    REFERENCES InventoryLocations(LocationID)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- -----------------------
+-- Orders and OrderItems
+-- -----------------------
+CREATE TABLE Orders (
+  OrderID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+CustomerID INT UNSIGNED,
+  ShippingAddressID INT UNSIGNED,
+  BillingAddressID INT UNSIGNED,
+  OrderStatus ENUM('Pending','Processing','Shipped','Completed','Cancelled','Refunded') NOT NULL DEFAULT 'Pending',
+  TotalAmount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  PlacedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (OrderID),
+  CONSTRAINT fk_orders_customer FOREIGN KEY (CustomerID)
+    REFERENCES Customers(CustomerID)
+    ON DELETE RESTRICT
+    ON UPDATE CASCADE,
+  CONSTRAINT fk_orders_shipaddr FOREIGN KEY (ShippingAddressID)
+    REFERENCES Addresses(AddressID)
+    ON DELETE SET NULL
+    ON UPDATE CASCADE,
+  CONSTRAINT fk_orders_billaddr FOREIGN KEY (BillingAddressID)
+    REFERENCES Addresses(AddressID)
+    ON DELETE SET NULL
+    ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE OrderItems (
+  OrderItemID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  OrderID INT UNSIGNED NOT NULL,
+  ProductID INT UNSIGNED NOT NULL,
+  UnitPrice DECIMAL(10,2) NOT NULL,
+  Quantity INT UNSIGNED NOT NULL DEFAULT 1,
+  LineTotal DECIMAL(12,2) AS (UnitPrice * Quantity) STORED,
+
+  PRIMARY KEY (OrderItemID),
+  INDEX idx_orderitems_order (OrderID),
+  CONSTRAINT fk_oi_order FOREIGN KEY (OrderID)
+    REFERENCES Orders(OrderID)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE,
+  CONSTRAINT fk_oi_product FOREIGN KEY (ProductID)
+    REFERENCES Products(ProductID)
+    ON DELETE RESTRICT
+    ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- -----------------------
+-- Payments (One-to-One with Orders)
+-- -----------------------
+CREATE TABLE Payments (
+  PaymentID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  OrderID INT UNSIGNED NOT NULL UNIQUE, -- enforce one-to-one: an order has at most one payment record in this simple model
+  PaymentMethod ENUM('Card','PayPal','BankTransfer','CashOnDelivery') NOT NULL,
+  Amount DECIMAL(12,2) NOT NULL,
+  Currency CHAR(3) NOT NULL DEFAULT 'USD',
+  PaidAt DATETIME,
+  Status ENUM('Pending','Completed','Failed','Refunded') NOT NULL DEFAULT 'Pending',
+  TransactionReference VARCHAR(255),
+  PRIMARY KEY (PaymentID),
+  CONSTRAINT fk_payments_order FOREIGN KEY (OrderID)
+    REFERENCES Orders(OrderID)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- -----------------------
+-- Reviews (Transitive info stored separately)
+-- -----------------------
+CREATE TABLE Reviews (
+  ReviewID INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  ProductID INT UNSIGNED NOT NULL,
+  CustomerID INT UNSIGNED,  -- removed NOT NULL
+  Rating TINYINT UNSIGNED NOT NULL CHECK (Rating BETWEEN 1 AND 5),
+  Title VARCHAR(200),
+  Body TEXT,
+  CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (ReviewID),
+  CONSTRAINT fk_review_product FOREIGN KEY (ProductID)
+    REFERENCES Products(ProductID)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE,
+  CONSTRAINT fk_review_customer FOREIGN KEY (CustomerID)
+    REFERENCES Customers(CustomerID)
+    ON DELETE SET NULL
+    ON UPDATE CASCADE
+) ENGINE=InnoDB;
